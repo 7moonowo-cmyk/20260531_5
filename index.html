@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>跨裝置雲端攝影機</title>
+    <!-- 引入 PeerJS 與 QRCode.js 外掛 -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background-color: #1a1a1a;
+        color: white;
+        font-family: sans-serif;
+        overflow: hidden;
+      }
+      #status {
+        position: absolute;
+        top: 10px;
+        font-size: 1.2rem;
+        color: #00ff00;
+        z-index: 10;
+        background: rgba(0,0,0,0.5);
+        padding: 5px 15px;
+        border-radius: 20px;
+      }
+      #setup-area {
+        text-align: center;
+      }
+      #qrcode-container {
+        display: inline-block;
+        background: white;
+        padding: 10px;
+        line-height: 0; /* 徹底消除條碼下方的空白 */
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      }
+      /* 影片容器：大小適中，保持等比例 */
+      .video-container {
+        width: 90vw;
+        max-width: 960px;
+        height: 70vh;
+        display: none;
+        position: relative;
+        background: #000;
+      }
+      video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain; /* 等比例縮放，確保不變形且完整顯示 */
+        transform: scaleX(1); /* 確保畫面為正向（不鏡像） */
+      }
+      p { text-align: center; max-width: 80%; }
+    </style>
+  </head>
+  <body>
+    <div id="status">初始化連線中...</div>
+
+    <div id="setup-area">
+      <div id="qrcode-container"></div>
+      <p>請用手機掃描上方 QR Code 作為攝影機</p>
+    </div>
+
+    <div id="video-container" class="video-container">
+      <!-- 加入 muted 以確保瀏覽器允許自動播放影像 -->
+      <video id="remote-video" autoplay playsinline muted></video>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById('status');
+      const setupArea = document.getElementById('setup-area');
+      const videoContainer = document.getElementById('video-container');
+      const videoEl = document.getElementById('remote-video');
+
+      // 檢查網址是否有參數 (被掃描後會帶有 ?join=ID)
+      const urlParams = new URLSearchParams(window.location.search);
+      const joinId = urlParams.get('join');
+
+      const peer = new Peer();
+
+      peer.on('open', (id) => {
+        if (!joinId) {
+          // 電腦端：顯示 QR Code 等待手機撥入
+          statusEl.innerText = "等待攝影機加入...";
+          const hostUrl = `${window.location.origin}${window.location.pathname}?join=${id}`;
+          new QRCode(document.getElementById("qrcode-container"), {
+            text: hostUrl,
+            width: 200,
+            height: 200
+          });
+        } else {
+          // 手機端：主動請求攝影機並撥打給電腦
+          statusEl.innerText = "手機攝影機啟動中...";
+          setupArea.style.display = 'none';
+          startCamera(joinId);
+        }
+      });
+
+      // 電腦端：接聽手機的來電
+      peer.on('call', (call) => {
+        console.log("收到攝影機連線請求...");
+        call.answer(); // 接聽
+        call.on('stream', (stream) => {
+          console.log("接收到影像串流，準備顯示...");
+          showVideoStream(stream);
+          statusEl.innerText = "攝影機已連線";
+        });
+      });
+
+      // 錯誤處理
+      peer.on('error', (err) => {
+        console.error("PeerJS 錯誤:", err);
+        statusEl.innerText = "連線失敗: " + err.type;
+      });
+
+      async function startCamera(targetId) {
+        try {
+          // 指定使用前置鏡頭 (user)
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+              facingMode: "user", // 使用前置鏡頭自拍
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            }, 
+            audio: false 
+          });
+          
+          showVideoStream(stream); // 手機端也顯示自己
+          peer.call(targetId, stream); // 將畫面傳給電腦
+          statusEl.innerText = "影像傳送中...";
+        } catch (err) {
+          statusEl.innerText = "相機開啟失敗: " + err.message;
+        }
+      }
+
+      function showVideoStream(stream) {
+        setupArea.style.display = 'none';
+        videoContainer.style.display = 'block';
+        videoEl.srcObject = stream;
+        // 強制調用播放，解決某些瀏覽器靜止的問題
+        videoEl.play().catch(e => console.error("影片播放失敗:", e));
+      }
+    </script>
+  </body>
+</html>
